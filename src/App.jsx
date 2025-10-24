@@ -33,10 +33,11 @@ function useScript(url) {
 }
 
 export default function App() {
-  const [status, setStatus] = useState("idle");
+  const [status, setStatus] = useState("idle"); // idle, scanning, loading, confirmed, notfound, error, alreadyScanned
   const [ticketData, setTicketData] = useState(null);
   const [parsedTicketId, setParsedTicketId] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [scannedTickets, setScannedTickets] = useState(new Set());
 
   const html5QrCodeRef = useRef(null);
   const isScannerScriptLoaded = useScript("https://unpkg.com/html5-qrcode");
@@ -103,7 +104,7 @@ export default function App() {
     let ticketId = ticketQRData;
     let qrInfo = {};
 
-    // Parse JSON from QR code
+    // Parse QR JSON
     try {
       qrInfo = JSON.parse(ticketQRData);
       ticketId = qrInfo.id || qrInfo.guestIndex || ticketId;
@@ -113,28 +114,43 @@ export default function App() {
 
     setParsedTicketId(ticketId);
 
+    // Already scanned check
+    if (scannedTickets.has(ticketId)) {
+      setTicketData({
+        name: qrInfo.userName || qrInfo.name,
+        rollno: qrInfo.userRollNo || qrInfo.rollno,
+        show: qrInfo.showName || qrInfo.show,
+        id: ticketId,
+      });
+      setStatus("alreadyScanned");
+      return;
+    }
+
     const docRef = doc(db, "tickets", ticketId);
     try {
       const docSnap = await getDoc(docRef);
+      let dataToShow;
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setTicketData({
+        dataToShow = {
           name: data.userName,
           rollno: data.userRollNo,
           show: data.showName,
           id: ticketId,
-        });
+        };
         setStatus("confirmed");
       } else {
-        // Use QR info fallback if Firestore does not exist
-        setTicketData({
+        dataToShow = {
           name: qrInfo.userName || qrInfo.name,
           rollno: qrInfo.userRollNo || qrInfo.rollno,
           show: qrInfo.showName || qrInfo.show,
           id: ticketId,
-        });
+        };
         setStatus("notfound");
       }
+      setTicketData(dataToShow);
+      // Mark as scanned
+      setScannedTickets(prev => new Set(prev).add(ticketId));
     } catch {
       setTicketData({
         name: qrInfo.userName || qrInfo.name,
@@ -173,10 +189,11 @@ export default function App() {
           </div>
         )}
 
-        {(status === "loading" || status === "confirmed" || status === "notfound" || status === "error") && (
+        {(status === "loading" || status === "confirmed" || status === "notfound" || status === "error" || status === "alreadyScanned") && (
           <div className="w-full flex flex-col items-center mt-2">
             {status === "loading" && <Loader2 className="animate-spin w-10 h-10 mb-2" />}
             {status === "confirmed" && <CheckCircle className="w-10 h-10 text-green-400 mb-2" />}
+            {status === "alreadyScanned" && <XCircle className="w-10 h-10 text-yellow-400 mb-2" />}
             {(status === "notfound" || status === "error") && <XCircle className="w-10 h-10 text-red-400 mb-2" />}
 
             {ticketData && (
