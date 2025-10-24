@@ -33,7 +33,7 @@ function useScript(url) {
 }
 
 export default function App() {
-  const [status, setStatus] = useState("idle"); // idle, scanning, loading, confirmed, notfound, error
+  const [status, setStatus] = useState("idle");
   const [ticketData, setTicketData] = useState(null);
   const [parsedTicketId, setParsedTicketId] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
@@ -103,11 +103,13 @@ export default function App() {
     let ticketId = ticketQRData;
     let qrInfo = {};
 
-    // Parse JSON if QR contains JSON
+    // Parse JSON from QR code
     try {
       qrInfo = JSON.parse(ticketQRData);
-      ticketId = qrInfo.id;
-    } catch {}
+      ticketId = qrInfo.id || qrInfo.guestIndex || ticketId;
+    } catch {
+      qrInfo = { id: ticketId };
+    }
 
     setParsedTicketId(ticketId);
 
@@ -115,14 +117,31 @@ export default function App() {
     try {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        setTicketData(docSnap.data());
+        const data = docSnap.data();
+        setTicketData({
+          name: data.userName,
+          rollno: data.userRollNo,
+          show: data.showName,
+          id: ticketId,
+        });
         setStatus("confirmed");
       } else {
-        // Display QR JSON even if not in Firestore
-        setTicketData({ ...qrInfo, id: ticketId });
+        // Use QR info fallback if Firestore does not exist
+        setTicketData({
+          name: qrInfo.userName || qrInfo.name,
+          rollno: qrInfo.userRollNo || qrInfo.rollno,
+          show: qrInfo.showName || qrInfo.show,
+          id: ticketId,
+        });
         setStatus("notfound");
       }
     } catch {
+      setTicketData({
+        name: qrInfo.userName || qrInfo.name,
+        rollno: qrInfo.userRollNo || qrInfo.rollno,
+        show: qrInfo.showName || qrInfo.show,
+        id: ticketId,
+      });
       setStatus("error");
     }
   };
@@ -177,9 +196,11 @@ export default function App() {
                     <span className="font-semibold">Show:</span> {ticketData.show}
                   </div>
                 )}
-                <div>
-                  <span className="font-semibold">Ticket ID:</span> {parsedTicketId}
-                </div>
+                {ticketData.id && (
+                  <div>
+                    <span className="font-semibold">Ticket ID:</span> {ticketData.id}
+                  </div>
+                )}
               </div>
             )}
 
