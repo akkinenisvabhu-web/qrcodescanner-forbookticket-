@@ -33,11 +33,10 @@ function useScript(url) {
 }
 
 export default function App() {
-  const [status, setStatus] = useState("idle"); // idle, scanning, loading, confirmed, notfound, error, alreadyScanned
+  const [status, setStatus] = useState("idle");
   const [ticketData, setTicketData] = useState(null);
   const [parsedTicketId, setParsedTicketId] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const [scannedTickets, setScannedTickets] = useState([]); // tracks scanned ticket IDs
 
   const html5QrCodeRef = useRef(null);
   const isScannerScriptLoaded = useScript("https://unpkg.com/html5-qrcode");
@@ -79,15 +78,10 @@ export default function App() {
       verifyTicket(decodedText);
     };
 
-    const onScanFailure = () => {}; // ignore frequent "no QR found"
+    const onScanFailure = () => {};
 
     qrCodeScanner
-      .start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        onScanSuccess,
-        onScanFailure
-      )
+      .start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } }, onScanSuccess, onScanFailure)
       .catch(() => setStatus("error"));
 
     return () => stopScanner();
@@ -107,18 +101,11 @@ export default function App() {
     const ticketId = ticketIdFromQR.split("/").pop();
     setParsedTicketId(ticketId);
 
-    // check if already scanned
-    if (scannedTickets.includes(ticketId)) {
-      setStatus("alreadyScanned");
-      return;
-    }
-
     const docRef = doc(db, "tickets", ticketId);
     try {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         setTicketData(docSnap.data());
-        setScannedTickets((prev) => [...prev, ticketId]); // mark as scanned
         setStatus("confirmed");
       } else {
         setTicketData(null);
@@ -156,23 +143,14 @@ export default function App() {
           </div>
         )}
 
-        {(status === "loading" ||
-          status === "confirmed" ||
-          status === "notfound" ||
-          status === "error" ||
-          status === "alreadyScanned") && (
+        {(status === "loading" || status === "confirmed" || status === "notfound" || status === "error") && (
           <div className="w-full flex flex-col items-center">
             {status === "loading" && <Loader2 className="animate-spin w-10 h-10 mb-2" />}
             {status === "confirmed" && <CheckCircle className="w-10 h-10 text-green-400 mb-2" />}
             {status === "notfound" && <XCircle className="w-10 h-10 text-red-400 mb-2" />}
-            {status === "alreadyScanned" && <XCircle className="w-10 h-10 text-yellow-400 mb-2" />}
 
-            {(status === "confirmed" || status === "alreadyScanned") && ticketData && (
-              <div
-                className={`w-full p-4 mt-2 space-y-2 rounded-lg text-left ${
-                  status === "confirmed" ? "bg-gray-700" : "bg-yellow-700"
-                }`}
-              >
+            {status === "confirmed" && ticketData && (
+              <div className="w-full p-4 mt-2 space-y-2 bg-gray-700 rounded-lg text-left">
                 <div>
                   <span className="font-semibold">Name:</span> {ticketData.userName}
                 </div>
@@ -187,9 +165,6 @@ export default function App() {
                 <div>
                   <span className="font-semibold">Ticket ID:</span> {parsedTicketId}
                 </div>
-                {status === "alreadyScanned" && (
-                  <div className="text-red-400 font-bold mt-2">⚠️ Already scanned!</div>
-                )}
               </div>
             )}
 
