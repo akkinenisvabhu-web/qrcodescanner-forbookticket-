@@ -36,31 +36,21 @@ export default function App() {
   const [status, setStatus] = useState("idle"); // idle, scanning, loading, confirmed, notfound, error
   const [ticketData, setTicketData] = useState(null);
   const [parsedTicketId, setParsedTicketId] = useState(null);
-  const [debugLogs, setDebugLogs] = useState([]); // for on-page debug logs
   const [isAuthReady, setIsAuthReady] = useState(false);
 
   const html5QrCodeRef = useRef(null);
   const isScannerScriptLoaded = useScript("https://unpkg.com/html5-qrcode");
 
-  // ---------------- Helper to add debug messages ----------------
-  const addDebugLog = (message) => {
-    setDebugLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
-  };
-
   // ---------------- Auth ----------------
   useEffect(() => {
-    addDebugLog("Initializing Firebase Auth...");
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setIsAuthReady(true);
-        addDebugLog(`Authenticated user: ${user.uid}`);
       } else {
         try {
           await signInAnonymously(auth);
-          addDebugLog("Signed in anonymously.");
-        } catch (error) {
+        } catch {
           setStatus("error");
-          addDebugLog(`Auth error: ${error.message}`);
         }
       }
     });
@@ -72,26 +62,19 @@ export default function App() {
     if (status !== "scanning" || !isScannerScriptLoaded || !isAuthReady) return;
     if (!window.Html5Qrcode) {
       setStatus("error");
-      addDebugLog("html5-qrcode library not loaded.");
       return;
     }
 
-    addDebugLog("Starting QR scanner...");
     const qrCodeScanner = new window.Html5Qrcode("qr-reader");
     html5QrCodeRef.current = qrCodeScanner;
 
     const onScanSuccess = (decodedText) => {
       stopScanner();
-      addDebugLog(`QR scanned: ${decodedText}`);
       setStatus("loading");
       verifyTicket(decodedText);
     };
 
-    const onScanFailure = (error) => {
-      if (error && !error.includes("No QR code found")) {
-        addDebugLog(`QR scan error: ${error}`);
-      }
-    };
+    const onScanFailure = () => {};
 
     qrCodeScanner
       .start(
@@ -100,10 +83,7 @@ export default function App() {
         onScanSuccess,
         onScanFailure
       )
-      .catch((err) => {
-        setStatus("error");
-        addDebugLog(`Failed to start scanner: ${err.message}`);
-      });
+      .catch(() => setStatus("error"));
 
     return () => stopScanner();
   }, [status, isScannerScriptLoaded, isAuthReady]);
@@ -111,7 +91,7 @@ export default function App() {
   const stopScanner = () => {
     const scanner = html5QrCodeRef.current;
     if (scanner && scanner.stop) {
-      scanner.stop().finally(() => addDebugLog("QR scanner stopped."));
+      scanner.stop().finally(() => {});
       html5QrCodeRef.current = null;
     } else {
       html5QrCodeRef.current = null;
@@ -119,10 +99,17 @@ export default function App() {
   };
 
   // ---------------- Verify Ticket ----------------
-  const verifyTicket = async (ticketIdFromQR) => {
-    const ticketId = ticketIdFromQR.split("/").pop();
+  const verifyTicket = async (ticketQRData) => {
+    let ticketId = ticketQRData;
+    let qrInfo = {};
+
+    // Parse JSON if QR contains JSON
+    try {
+      qrInfo = JSON.parse(ticketQRData);
+      ticketId = qrInfo.id;
+    } catch {}
+
     setParsedTicketId(ticketId);
-    addDebugLog(`Verifying ticket: ${ticketId}`);
 
     const docRef = doc(db, "tickets", ticketId);
     try {
@@ -130,15 +117,12 @@ export default function App() {
       if (docSnap.exists()) {
         setTicketData(docSnap.data());
         setStatus("confirmed");
-        addDebugLog("Ticket found and confirmed.");
       } else {
-        setTicketData(null);
+        setTicketData({ ...qrInfo, id: ticketId });
         setStatus("notfound");
-        addDebugLog("No such ticket found.");
       }
-    } catch (error) {
+    } catch {
       setStatus("error");
-      addDebugLog(`Firestore error: ${error.message}`);
     }
   };
 
@@ -175,17 +159,21 @@ export default function App() {
             {status === "confirmed" && <CheckCircle className="w-10 h-10 text-green-400 mb-2" />}
             {(status === "notfound" || status === "error") && <XCircle className="w-10 h-10 text-red-400 mb-2" />}
 
-            {ticketData && status === "confirmed" && (
+            {ticketData && (
               <div className="w-full p-4 mt-2 space-y-2 bg-gray-700 rounded-lg text-left">
-                <div>
-                  <span className="font-semibold">Name:</span> {ticketData.userName}
-                </div>
-                <div>
-                  <span className="font-semibold">Roll Number:</span> {ticketData.rollNumber}
-                </div>
-                {ticketData.showName && (
+                {ticketData.name && (
                   <div>
-                    <span className="font-semibold">Show:</span> {ticketData.showName}
+                    <span className="font-semibold">Name:</span> {ticketData.name}
+                  </div>
+                )}
+                {ticketData.rollno && (
+                  <div>
+                    <span className="font-semibold">Roll Number:</span> {ticketData.rollno}
+                  </div>
+                )}
+                {ticketData.show && (
+                  <div>
+                    <span className="font-semibold">Show:</span> {ticketData.show}
                   </div>
                 )}
                 <div>
@@ -199,14 +187,6 @@ export default function App() {
             </button>
           </div>
         )}
-      </div>
-
-      {/* ---------------- Debug Logs ---------------- */}
-      <div className="w-full max-w-md p-4 bg-gray-700 rounded-lg text-left text-sm overflow-y-auto h-48">
-        <h2 className="font-bold text-yellow-400 mb-2">Debug Logs</h2>
-        {debugLogs.map((log, idx) => (
-          <div key={idx}>{log}</div>
-        ))}
       </div>
     </div>
   );
