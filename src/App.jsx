@@ -118,6 +118,7 @@ export default function App() {
         setTicketData(docSnap.data());
         setStatus("confirmed");
       } else {
+        // Display QR JSON even if not in Firestore
         setTicketData({ ...qrInfo, id: ticketId });
         setStatus("notfound");
       }
