@@ -1,21 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
-import {
-  getAuth,
-  signInAnonymously,
-  signInWithCustomToken,
-  onAuthStateChanged,
-} from "firebase/auth";
-import { getFirestore, doc, getDoc, setLogLevel } from "firebase/firestore";
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
+import { getFirestore, doc, getDoc } from "firebase/firestore";
 import { Camera, CheckCircle, XCircle, Loader2 } from "lucide-react";
 
-const isBrowser = typeof window !== "undefined";
-const runtimeFirebaseConfig =
-  isBrowser && window.__firebase_config
-    ? JSON.parse(window.__firebase_config)
-    : null;
-
-const firebaseConfig = runtimeFirebaseConfig || {
+const firebaseConfig = {
   apiKey: "AIzaSyDJW77QWT9ioNKgnuyUGqfml9HXaQmhKmE",
   authDomain: "ticket-booking-app-e9607.firebaseapp.com",
   projectId: "ticket-booking-app-e9607",
@@ -27,7 +16,6 @@ const firebaseConfig = runtimeFirebaseConfig || {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-setLogLevel("debug");
 
 function useScript(url) {
   const [loaded, setLoaded] = React.useState(false);
@@ -47,141 +35,98 @@ function useScript(url) {
 export default function App() {
   const [status, setStatus] = useState("idle");
   const [ticketData, setTicketData] = useState(null);
-  const [logs, setLogs] = useState([]);
-  const [userId, setUserId] = useState(null);
+  const [parsedTicketId, setParsedTicketId] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
 
   const html5QrCodeRef = useRef(null);
   const isScannerScriptLoaded = useScript("https://unpkg.com/html5-qrcode");
 
-  const addLog = (msg) => setLogs((prev) => [...prev, msg]);
-
-  // ---------------- Auth ----------------
+  // Auth
   useEffect(() => {
-    addLog("[INFO] Initializing Firebase Auth...");
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        addLog("[INFO] Authenticated user: " + user.uid);
-        setUserId(user.uid);
         setIsAuthReady(true);
       } else {
         try {
-          addLog("[INFO] Signing in...");
-          const token = isBrowser && window.__initial_auth_token ? window.__initial_auth_token : null;
-          if (token) {
-            addLog("[INFO] Using custom token...");
-            await signInWithCustomToken(auth, token);
+          if (window.__initial_auth_token) {
+            await signInWithCustomToken(auth, window.__initial_auth_token);
           } else {
-            addLog("[INFO] Signing in anonymously...");
             await signInAnonymously(auth);
           }
         } catch (error) {
-          addLog("[ERROR] Auth failed: " + error.message);
           setStatus("error");
-          setIsAuthReady(true);
         }
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // ---------------- QR Scanner ----------------
+  // QR Scanner
   useEffect(() => {
     if (status !== "scanning" || !isScannerScriptLoaded || !isAuthReady) return;
-
     if (!window.Html5Qrcode) {
-      addLog("[ERROR] html5-qrcode library not loaded.");
       setStatus("error");
       return;
     }
 
-    addLog("[INFO] Starting QR scanner...");
     const qrCodeScanner = new window.Html5Qrcode("qr-reader");
     html5QrCodeRef.current = qrCodeScanner;
 
     const onScanSuccess = (decodedText) => {
-      addLog("[INFO] QR scanned: " + decodedText);
       stopScanner();
       setStatus("loading");
       verifyTicket(decodedText);
     };
 
-    const onScanFailure = (error) => {
-      if (typeof error === "string" && !error.includes("No QR code found")) {
-        addLog("[WARN] QR scan error: " + error);
-      }
+    const onScanFailure = () => {
+      // ignore "no QR found" errors
     };
 
     qrCodeScanner
-      .start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        onScanSuccess,
-        onScanFailure
-      )
-      .catch((err) => {
-        addLog("[ERROR] QR scanner start failed: " + err.message);
-        setStatus("error");
-      });
+      .start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } }, onScanSuccess, onScanFailure)
+      .catch(() => setStatus("error"));
 
     return () => stopScanner();
   }, [status, isScannerScriptLoaded, isAuthReady]);
 
   const stopScanner = () => {
     const scanner = html5QrCodeRef.current;
-    if (scanner && typeof scanner.stop === "function") {
-      addLog("[INFO] Stopping QR scanner...");
-      scanner
-        .stop()
-        .then(() => addLog("[INFO] QR scanner stopped"))
-        .catch((err) => addLog("[ERROR] Stopping scanner failed: " + err.message))
-        .finally(() => (html5QrCodeRef.current = null));
-    } else html5QrCodeRef.current = null;
+    if (scanner && scanner.stop) {
+      scanner.stop().finally(() => (html5QrCodeRef.current = null));
+    } else {
+      html5QrCodeRef.current = null;
+    }
   };
 
-  // ---------------- Verify Ticket ----------------
   const verifyTicket = async (ticketIdFromQR) => {
-    addLog("[INFO] Verifying ticket: " + ticketIdFromQR);
-
-    if (!db || !isAuthReady) {
-      addLog("[ERROR] Database not ready");
-      setStatus("error");
-      return;
-    }
-
-    // Extract ticket ID from URL
+    // extract ticket ID from URL
     const ticketId = ticketIdFromQR.split("/").pop();
-    addLog("[INFO] Extracted ticket ID: " + ticketId);
+    setParsedTicketId(ticketId);
 
     const docRef = doc(db, "tickets", ticketId);
-
     try {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        addLog("[INFO] Ticket found: " + JSON.stringify(docSnap.data()));
         setTicketData(docSnap.data());
         setStatus("confirmed");
       } else {
-        addLog("[WARN] Ticket not found");
         setTicketData(null);
         setStatus("notfound");
       }
     } catch (error) {
-      addLog("[ERROR] Firestore error: " + error.message);
       setStatus("error");
     }
   };
 
-  // ---------------- UI Handlers ----------------
   const handleStartScanning = () => setStatus("scanning");
   const handleScanAgain = () => {
     setTicketData(null);
-    setLogs([]);
+    setParsedTicketId(null);
     setStatus("scanning");
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-gray-900 font-sans text-white">
+    <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-gray-900 text-white">
       <h1 className="text-3xl font-bold mb-4 text-blue-400">Ticket Verifier</h1>
 
       <div className="w-full max-w-md p-4 bg-gray-800 rounded-lg mb-4 min-h-[300px] flex flex-col items-center justify-center">
@@ -205,19 +150,31 @@ export default function App() {
             {status === "loading" && <Loader2 className="animate-spin w-10 h-10 mb-2" />}
             {status === "confirmed" && <CheckCircle className="w-10 h-10 text-green-400 mb-2" />}
             {status === "notfound" && <XCircle className="w-10 h-10 text-red-400 mb-2" />}
-            <pre className="w-full max-h-60 overflow-auto bg-gray-700 p-2 rounded text-sm mb-2">{JSON.stringify(ticketData, null, 2)}</pre>
-            <button onClick={handleScanAgain} className="bg-blue-600 px-6 py-2 rounded">
+
+            {status === "confirmed" && ticketData && (
+              <div className="w-full p-4 mt-2 space-y-2 bg-gray-700 rounded-lg text-left">
+                <div>
+                  <span className="font-semibold">Ticket ID:</span> {parsedTicketId}
+                </div>
+                <div>
+                  <span className="font-semibold">Name:</span> {ticketData.userName}
+                </div>
+                <div>
+                  <span className="font-semibold">Roll Number:</span> {ticketData.rollNumber}
+                </div>
+                {ticketData.showName && (
+                  <div>
+                    <span className="font-semibold">Show:</span> {ticketData.showName}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button onClick={handleScanAgain} className="mt-4 bg-blue-600 px-6 py-2 rounded">
               Scan Again
             </button>
           </div>
         )}
-      </div>
-
-      <div className="w-full max-w-md p-2 bg-gray-700 rounded-lg h-48 overflow-auto text-sm">
-        <h2 className="font-bold mb-1">Debug Logs:</h2>
-        {logs.map((log, i) => (
-          <div key={i}>{log}</div>
-        ))}
       </div>
     </div>
   );
