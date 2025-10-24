@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collectionGroup, query, where, getDocs, limit, setLogLevel } from 'firebase/firestore';
-import { Camera, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { Camera, CheckCircle, XCircle, Loader2 } from 'lucide-react'; // Added missing imports
 
 // --- PASTE YOUR FIREBASE CONFIG HERE ---
 // (You can get this from your Firebase project settings)
@@ -11,6 +11,7 @@ let firebaseConfig;
 if (typeof __firebase_config !== 'undefined') {
   firebaseConfig = JSON.parse(__firebase_config);
 } else {
+  // Fallback config (as provided in your example)
   firebaseConfig = {
     apiKey: "AIzaSyDJW77QWT9ioNKgnuyUGqfml9HXaQmhKmE",
     authDomain: "ticket-booking-app-e9607.firebaseapp.com",
@@ -318,7 +319,7 @@ export default function App() {
               </button>
             </div>
           )}
-
+          
           {(status === 'confirmed' || status === 'notfound' || status === 'error' || status === 'loading') && (
             <div className="flex flex-col items-center justify-center w-full">
               {renderStatusMessage()}
