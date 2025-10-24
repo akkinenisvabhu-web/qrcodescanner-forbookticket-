@@ -56,7 +56,7 @@ export default function App() {
 
   const addLog = (msg) => setLogs((prev) => [...prev, msg]);
 
-  // Auth
+  // ---------------- Auth ----------------
   useEffect(() => {
     addLog("[INFO] Initializing Firebase Auth...");
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -85,7 +85,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // QR Scanner
+  // ---------------- QR Scanner ----------------
   useEffect(() => {
     if (status !== "scanning" || !isScannerScriptLoaded || !isAuthReady) return;
 
@@ -113,7 +113,12 @@ export default function App() {
     };
 
     qrCodeScanner
-      .start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } }, onScanSuccess, onScanFailure)
+      .start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        onScanSuccess,
+        onScanFailure
+      )
       .catch((err) => {
         addLog("[ERROR] QR scanner start failed: " + err.message);
         setStatus("error");
@@ -134,16 +139,22 @@ export default function App() {
     } else html5QrCodeRef.current = null;
   };
 
-  // Verify ticket
+  // ---------------- Verify Ticket ----------------
   const verifyTicket = async (ticketIdFromQR) => {
     addLog("[INFO] Verifying ticket: " + ticketIdFromQR);
+
     if (!db || !isAuthReady) {
       addLog("[ERROR] Database not ready");
       setStatus("error");
       return;
     }
 
-    const docRef = doc(db, "tickets", ticketIdFromQR);
+    // Extract ticket ID from URL
+    const ticketId = ticketIdFromQR.split("/").pop();
+    addLog("[INFO] Extracted ticket ID: " + ticketId);
+
+    const docRef = doc(db, "tickets", ticketId);
+
     try {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
@@ -161,6 +172,7 @@ export default function App() {
     }
   };
 
+  // ---------------- UI Handlers ----------------
   const handleStartScanning = () => setStatus("scanning");
   const handleScanAgain = () => {
     setTicketData(null);
@@ -173,12 +185,18 @@ export default function App() {
       <h1 className="text-3xl font-bold mb-4 text-blue-400">Ticket Verifier</h1>
 
       <div className="w-full max-w-md p-4 bg-gray-800 rounded-lg mb-4 min-h-[300px] flex flex-col items-center justify-center">
-        {status === "idle" && <button onClick={handleStartScanning} className="bg-blue-600 px-6 py-3 rounded-lg">Start Scanning</button>}
+        {status === "idle" && (
+          <button onClick={handleStartScanning} className="bg-blue-600 px-6 py-3 rounded-lg">
+            Start Scanning
+          </button>
+        )}
 
         {status === "scanning" && (
           <div className="w-full flex flex-col items-center">
             <div id="qr-reader" className="w-full rounded-lg overflow-hidden border-2 border-gray-600"></div>
-            <button onClick={stopScanner} className="mt-2 bg-gray-600 px-4 py-2 rounded">Stop</button>
+            <button onClick={stopScanner} className="mt-2 bg-gray-600 px-4 py-2 rounded">
+              Stop
+            </button>
           </div>
         )}
 
@@ -188,14 +206,18 @@ export default function App() {
             {status === "confirmed" && <CheckCircle className="w-10 h-10 text-green-400 mb-2" />}
             {status === "notfound" && <XCircle className="w-10 h-10 text-red-400 mb-2" />}
             <pre className="w-full max-h-60 overflow-auto bg-gray-700 p-2 rounded text-sm mb-2">{JSON.stringify(ticketData, null, 2)}</pre>
-            <button onClick={handleScanAgain} className="bg-blue-600 px-6 py-2 rounded">Scan Again</button>
+            <button onClick={handleScanAgain} className="bg-blue-600 px-6 py-2 rounded">
+              Scan Again
+            </button>
           </div>
         )}
       </div>
 
       <div className="w-full max-w-md p-2 bg-gray-700 rounded-lg h-48 overflow-auto text-sm">
         <h2 className="font-bold mb-1">Debug Logs:</h2>
-        {logs.map((log, i) => <div key={i}>{log}</div>)}
+        {logs.map((log, i) => (
+          <div key={i}>{log}</div>
+        ))}
       </div>
     </div>
   );
