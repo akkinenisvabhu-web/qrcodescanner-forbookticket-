@@ -1,28 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, getDoc, setLogLevel } from 'firebase/firestore';
+import { getFirestore, collectionGroup, query, where, getDocs, limit, setLogLevel } from 'firebase/firestore';
 import { Camera, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 
-// --- This is just a comment block, no changes needed ---
-//
-// const firebaseConfig = {
-//   apiKey: "AIzaSyDJW77QWT9ioNKgnuyUGqfml9HXaQmhKmE",
-//   authDomain: "ticket-booking-app-e9607.firebaseapp.com",
-//   projectId: "ticket-booking-app-e9607",
-//   storageBucket: "ticket-booking-app-e9607.firebasestorage.app",
-//   messagingSenderId: "480956494147",
-//   appId: "1:480956494147:web:9f088a2decf7d440dbbff6"
-// };
-//
-// --- --- --- --- --- --- --- --- --- ---
-
-// Use global config variable if available, otherwise use local fallback
+// --- PASTE YOUR FIREBASE CONFIG HERE ---
+// (You can get this from your Firebase project settings)
+// ...
 let firebaseConfig;
 if (typeof __firebase_config !== 'undefined') {
   firebaseConfig = JSON.parse(__firebase_config);
 } else {
-  // --- THIS IS YOUR CONFIG for local VS Code development ---
   firebaseConfig = {
     apiKey: "AIzaSyDJW77QWT9ioNKgnuyUGqfml9HXaQmhKmE",
     authDomain: "ticket-booking-app-e9607.firebaseapp.com",
@@ -31,7 +19,6 @@ if (typeof __firebase_config !== 'undefined') {
     messagingSenderId: "480956494147",
     appId: "1:480956494147:web:9f088a2decf7d440dbbff6"
   };
-  console.log("Using local Firebase config.");
 }
 
 // Initialize Firebase
@@ -43,7 +30,6 @@ const db = getFirestore(app);
 setLogLevel('debug');
 
 // --- Helper: Script Loader ---
-// This hook dynamically loads the html5-qrcode script
 function useScript(url) {
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
@@ -57,26 +43,22 @@ function useScript(url) {
     } else {
       setLoaded(true);
     }
-    // No cleanup needed, script should stay loaded
+    // No cleanup needed
   }, [url]);
   return loaded;
 }
 
-// --- Main App Component ---
 export default function App() {
   const [status, setStatus] = useState('idle'); // 'idle', 'scanning', 'loading', 'confirmed', 'notfound', 'error'
   const [ticketData, setTicketData] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [userId, setUserId] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
-  
-  // Ref for the html5-qrcode scanner instance
+
   const html5QrCodeRef = useRef(null);
-  
-  // Get the appId, falling back to a default
   const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-  // Load the html5-qrcode library
+  // load html5-qrcode (pick a version if you prefer)
   const isScannerScriptLoaded = useScript('https://unpkg.com/html5-qrcode');
 
   // --- Firebase Auth Effect ---
@@ -87,7 +69,6 @@ export default function App() {
         setIsAuthReady(true);
       } else {
         try {
-          // Use custom token if available, else sign in anonymously
           if (typeof __initial_auth_token !== 'undefined') {
             await signInWithCustomToken(auth, __initial_auth_token);
           } else {
@@ -110,7 +91,6 @@ export default function App() {
       return;
     }
 
-    // Ensure we have the Html5Qrcode class
     if (!window.Html5Qrcode) {
       console.error("html5-qrcode library not loaded.");
       setStatus('error');
@@ -124,7 +104,7 @@ export default function App() {
     const onScanSuccess = (decodedText, decodedResult) => {
       // Stop the scanner
       stopScanner();
-      
+
       // Handle the result
       console.log(`Scan result: ${decodedText}`, decodedResult);
       setStatus('loading');
@@ -132,23 +112,20 @@ export default function App() {
     };
 
     const onScanFailure = (error) => {
-      // This will be called frequently, so we only log if it's not a "QR not found" error
-      if (!error.includes("No QR code found")) {
-         console.warn(`QR scan error: ${error}`);
+      // frequent failures are normal (no QR in frame)
+      if (typeof error === 'string' && !error.includes("No QR code found")) {
+        console.warn(`QR scan error: ${error}`);
       }
     };
 
-    // Configuration for the scanner
     const config = {
       fps: 10,
       qrbox: { width: 250, height: 250 },
-      // Prioritize the rear camera ("environment")
       facingMode: "environment"
     };
 
-    // Start scanning
     qrCodeScanner.start(
-      { facingMode: "environment" }, // Request rear camera
+      { facingMode: "environment" },
       config,
       onScanSuccess,
       onScanFailure
@@ -156,50 +133,64 @@ export default function App() {
       console.error("Error starting QR scanner:", err);
       // Fallback to any camera if rear fails
       qrCodeScanner.start(
-        undefined, // Let library choose
+        undefined,
         config,
         onScanSuccess,
         onScanFailure
-      ).catch(err => {
-         console.error("Critical scanner error:", err);
-         setStatus('error');
-         setErrorMessage('Could not start camera. Check permissions.');
+      ).catch(err2 => {
+        console.error("Critical scanner error:", err2);
+        setStatus('error');
+        setErrorMessage('Could not start camera. Check permissions.');
       });
     });
 
-    // Cleanup function to stop the scanner
     return () => {
       stopScanner();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, isScannerScriptLoaded, isAuthReady]);
-  
+
   // --- Stop Scanner Function ---
   const stopScanner = () => {
-    if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
-      html5QrCodeRef.current.stop()
-        .then(() => console.log("QR Scanner stopped."))
-        .catch(err => console.error("Error stopping scanner:", err));
+    const scanner = html5QrCodeRef.current;
+    if (scanner && typeof scanner.stop === 'function') {
+      scanner.stop()
+        .then(() => {
+          console.log("QR Scanner stopped.");
+        })
+        .catch(err => {
+          console.error("Error stopping scanner:", err);
+        })
+        .finally(() => {
+          html5QrCodeRef.current = null;
+        });
+    } else {
       html5QrCodeRef.current = null;
     }
   };
 
   // --- Firestore Ticket Verification ---
-  const verifyTicket = async (ticketId) => {
+  const verifyTicket = async (ticketIdFromQR) => {
     if (!db || !isAuthReady) {
       setStatus('error');
       setErrorMessage('Database not ready.');
       return;
     }
-    
-    // We assume tickets are in a public collection for a verifier app
-    // Path: /artifacts/{appId}/public/data/tickets/{ticketId}
-    const ticketCollectionPath = `artifacts/${appId}/public/data/tickets`;
-    const docRef = doc(db, ticketCollectionPath, ticketId);
+
+    // Collection group query to find the ticket across all shows
+    const ticketsCollectionGroup = collectionGroup(db, 'tickets');
+
+    const q = query(
+      ticketsCollectionGroup,
+      where("ticketId", "==", ticketIdFromQR),
+      limit(1)
+    );
 
     try {
-      const docSnap = await getDoc(docRef);
+      const querySnapshot = await getDocs(q);
 
-      if (docSnap.exists()) {
+      if (!querySnapshot.empty) {
+        const docSnap = querySnapshot.docs[0];
         console.log("Ticket data:", docSnap.data());
         setTicketData(docSnap.data());
         setStatus('confirmed');
@@ -211,12 +202,11 @@ export default function App() {
     } catch (error) {
       console.error("Error getting document:", error);
       setStatus('error');
-      setErrorMessage('Error querying database.');
+      setErrorMessage('Error querying database. Check rules & index.');
     }
   };
 
-  // --- Render Functions ---
-
+  // --- Render helpers ---
   const renderStatusMessage = () => {
     switch (status) {
       case 'confirmed':
@@ -243,7 +233,7 @@ export default function App() {
           </div>
         );
       case 'loading':
-         return (
+        return (
           <div className="text-center text-blue-400">
             <Loader2 className="w-16 h-16 mx-auto mb-4 animate-spin" />
             <h2 className="text-2xl font-bold">Verifying...</h2>
@@ -268,21 +258,21 @@ export default function App() {
           <span className="font-medium text-white">{ticketData.rollNumber}</span>
         </div>
         {ticketData.showName && (
-           <div className="flex justify-between">
-             <span className="font-semibold text-gray-400">Show:</span>
-             <span className="font-medium text-white">{ticketData.showName}</span>
-           </div>
+          <div className="flex justify-between">
+            <span className="font-semibold text-gray-400">Show:</span>
+            <span className="font-medium text-white">{ticketData.showName}</span>
+          </div>
         )}
       </div>
     );
   };
-  
+
   const handleScanAgain = () => {
     setTicketData(null);
     setErrorMessage('');
     setStatus('scanning');
   };
-  
+
   const handleStartScanning = () => {
     if (!isScannerScriptLoaded) {
       setErrorMessage('Scanner library is still loading...');
@@ -291,8 +281,8 @@ export default function App() {
     }
     if (!isAuthReady) {
       setErrorMessage('Authenticating... Please wait.');
-      setStatus('error'); // Show error temporarily
-      setTimeout(() => setStatus('idle'), 2000); // Reset after 2s
+      setStatus('error');
+      setTimeout(() => setStatus('idle'), 2000);
       return;
     }
     setStatus('scanning');
@@ -328,14 +318,14 @@ export default function App() {
               </button>
             </div>
           )}
-          
+
           {(status === 'confirmed' || status === 'notfound' || status === 'error' || status === 'loading') && (
             <div className="flex flex-col items-center justify-center w-full">
               {renderStatusMessage()}
               {renderTicketData()}
-              
+
               {status !== 'loading' && (
-                 <button
+                <button
                   onClick={handleScanAgain}
                   className="flex items-center justify-center w-full px-6 py-3 mt-6 font-semibold text-white transition-all bg-blue-600 rounded-lg shadow-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
                 >
@@ -350,4 +340,3 @@ export default function App() {
     </div>
   );
 }
-
