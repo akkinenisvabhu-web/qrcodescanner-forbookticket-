@@ -33,7 +33,7 @@ function useScript(url) {
 }
 
 export default function App() {
-  const [status, setStatus] = useState("idle");
+  const [status, setStatus] = useState("idle"); // idle, scanning, loading, confirmed, notfound, error
   const [ticketData, setTicketData] = useState(null);
   const [parsedTicketId, setParsedTicketId] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
@@ -78,10 +78,15 @@ export default function App() {
       verifyTicket(decodedText);
     };
 
-    const onScanFailure = () => {};
+    const onScanFailure = () => {}; // ignore frequent "no QR found"
 
     qrCodeScanner
-      .start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } }, onScanSuccess, onScanFailure)
+      .start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        onScanSuccess,
+        onScanFailure
+      )
       .catch(() => setStatus("error"));
 
     return () => stopScanner();
@@ -148,6 +153,7 @@ export default function App() {
             {status === "loading" && <Loader2 className="animate-spin w-10 h-10 mb-2" />}
             {status === "confirmed" && <CheckCircle className="w-10 h-10 text-green-400 mb-2" />}
             {status === "notfound" && <XCircle className="w-10 h-10 text-red-400 mb-2" />}
+            {status === "error" && <XCircle className="w-10 h-10 text-red-400 mb-2" />}
 
             {status === "confirmed" && ticketData && (
               <div className="w-full p-4 mt-2 space-y-2 bg-gray-700 rounded-lg text-left">
