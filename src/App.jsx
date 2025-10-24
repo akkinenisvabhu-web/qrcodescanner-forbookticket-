@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collectionGroup, query, where, getDocs, limit, setLogLevel } from 'firebase/firestore';
-import { Camera, CheckCircle, XCircle, Loader2 } from 'lucide-react'; // Added missing imports
+// Import 'doc' and 'getDoc' for simple document fetching
+import { getFirestore, doc, getDoc, setLogLevel } from 'firebase/firestore';
+import { Camera, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 
 // --- PASTE YOUR FIREBASE CONFIG HERE ---
 // (You can get this from your Firebase project settings)
@@ -11,7 +12,6 @@ let firebaseConfig;
 if (typeof __firebase_config !== 'undefined') {
   firebaseConfig = JSON.parse(__firebase_config);
 } else {
-  // Fallback config (as provided in your example)
   firebaseConfig = {
     apiKey: "AIzaSyDJW77QWT9ioNKgnuyUGqfml9HXaQmhKmE",
     authDomain: "ticket-booking-app-e9607.firebaseapp.com",
@@ -178,32 +178,30 @@ export default function App() {
       return;
     }
 
-    // Collection group query to find the ticket across all shows
-    const ticketsCollectionGroup = collectionGroup(db, 'tickets');
-
-    const q = query(
-      ticketsCollectionGroup,
-      where("ticketId", "==", ticketIdFromQR),
-      limit(1)
-    );
+    // --- THIS IS THE NEW LOGIC ---
+    // It looks for a document ID inside the top-level 'tickets' collection.
+    // Make sure your 'tickets' collection is at the root of your database.
+    const docRef = doc(db, 'tickets', ticketIdFromQR);
 
     try {
-      const querySnapshot = await getDocs(q);
+      const docSnap = await getDoc(docRef);
 
-      if (!querySnapshot.empty) {
-        const docSnap = querySnapshot.docs[0];
+      if (docSnap.exists()) {
+        // Document found!
         console.log("Ticket data:", docSnap.data());
         setTicketData(docSnap.data());
         setStatus('confirmed');
       } else {
+        // Document does not exist
         console.log("No such document!");
         setTicketData(null);
         setStatus('notfound');
       }
     } catch (error) {
+      // This could be a permissions error
       console.error("Error getting document:", error);
       setStatus('error');
-      setErrorMessage('Error querying database. Check rules & index.');
+      setErrorMessage('Error querying database. Check rules.');
     }
   };
 
@@ -287,7 +285,7 @@ export default function App() {
       return;
     }
     setStatus('scanning');
-  }
+  };
 
   return (
     <div className="flex items-center justify-center min-h-screen p-4 bg-gray-900 font-sans">
@@ -319,7 +317,7 @@ export default function App() {
               </button>
             </div>
           )}
-          
+
           {(status === 'confirmed' || status === 'notfound' || status === 'error' || status === 'loading') && (
             <div className="flex flex-col items-center justify-center w-full">
               {renderStatusMessage()}
