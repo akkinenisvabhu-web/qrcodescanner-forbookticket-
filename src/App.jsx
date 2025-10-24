@@ -4,16 +4,12 @@ import {
   getAuth,
   signInAnonymously,
   signInWithCustomToken,
-onAuthStateChanged
+  onAuthStateChanged,
 } from "firebase/auth";
 import { getFirestore, doc, getDoc, setLogLevel } from "firebase/firestore";
 import { Camera, CheckCircle, XCircle, Loader2 } from "lucide-react";
 
-// ----------------------
-// 🔧 Firebase Config
-// ----------------------
 const isBrowser = typeof window !== "undefined";
-
 const runtimeFirebaseConfig =
   isBrowser && window.__firebase_config
     ? JSON.parse(window.__firebase_config)
@@ -28,20 +24,14 @@ const firebaseConfig = runtimeFirebaseConfig || {
   appId: "1:480956494147:web:9f088a2decf7d440dbbff6",
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-
-// Optional Firestore logging
 setLogLevel("debug");
 
-// ----------------------
-// 🔹 Script Loader Hook
-// ----------------------
 function useScript(url) {
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
+  const [loaded, setLoaded] = React.useState(false);
+  React.useEffect(() => {
     let script = document.querySelector(`script[src="${url}"]`);
     if (!script) {
       script = document.createElement("script");
@@ -49,49 +39,44 @@ function useScript(url) {
       script.async = true;
       script.onload = () => setLoaded(true);
       document.body.appendChild(script);
-    } else {
-      setLoaded(true);
-    }
+    } else setLoaded(true);
   }, [url]);
   return loaded;
 }
 
-// ----------------------
-// ⚙️ Main Component
-// ----------------------
 export default function App() {
-  const [status, setStatus] = useState("idle"); // idle, scanning, loading, confirmed, notfound, error
+  const [status, setStatus] = useState("idle");
   const [ticketData, setTicketData] = useState(null);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [logs, setLogs] = useState([]);
   const [userId, setUserId] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
 
   const html5QrCodeRef = useRef(null);
   const isScannerScriptLoaded = useScript("https://unpkg.com/html5-qrcode");
 
-  // ----------------------
-  // 🔐 Firebase Auth
-  // ----------------------
+  const addLog = (msg) => setLogs((prev) => [...prev, msg]);
+
+  // Auth
   useEffect(() => {
+    addLog("[INFO] Initializing Firebase Auth...");
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        console.log("Authenticated as:", user.uid);
+        addLog("[INFO] Authenticated user: " + user.uid);
         setUserId(user.uid);
         setIsAuthReady(true);
       } else {
         try {
-          const token =
-            isBrowser && window.__initial_auth_token
-              ? window.__initial_auth_token
-              : null;
+          addLog("[INFO] Signing in...");
+          const token = isBrowser && window.__initial_auth_token ? window.__initial_auth_token : null;
           if (token) {
+            addLog("[INFO] Using custom token...");
             await signInWithCustomToken(auth, token);
           } else {
+            addLog("[INFO] Signing in anonymously...");
             await signInAnonymously(auth);
           }
         } catch (error) {
-          console.error("Error signing in:", error);
-          setErrorMessage("Authentication failed.");
+          addLog("[ERROR] Auth failed: " + error.message);
           setStatus("error");
           setIsAuthReady(true);
         }
@@ -100,228 +85,117 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // ----------------------
-  // 🎥 QR Scanner Setup
-  // ----------------------
+  // QR Scanner
   useEffect(() => {
     if (status !== "scanning" || !isScannerScriptLoaded || !isAuthReady) return;
 
     if (!window.Html5Qrcode) {
-      console.error("html5-qrcode not loaded.");
+      addLog("[ERROR] html5-qrcode library not loaded.");
       setStatus("error");
-      setErrorMessage("Scanner library failed to load.");
       return;
     }
 
+    addLog("[INFO] Starting QR scanner...");
     const qrCodeScanner = new window.Html5Qrcode("qr-reader");
     html5QrCodeRef.current = qrCodeScanner;
 
     const onScanSuccess = (decodedText) => {
+      addLog("[INFO] QR scanned: " + decodedText);
       stopScanner();
-      console.log("QR code scanned:", decodedText);
       setStatus("loading");
       verifyTicket(decodedText);
     };
 
     const onScanFailure = (error) => {
       if (typeof error === "string" && !error.includes("No QR code found")) {
-        console.warn("QR scan error:", error);
+        addLog("[WARN] QR scan error: " + error);
       }
     };
 
-    const config = { fps: 10, qrbox: { width: 250, height: 250 }, facingMode: "environment" };
-
     qrCodeScanner
-      .start({ facingMode: "environment" }, config, onScanSuccess, onScanFailure)
+      .start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } }, onScanSuccess, onScanFailure)
       .catch((err) => {
-        console.error("Error starting QR scanner:", err);
+        addLog("[ERROR] QR scanner start failed: " + err.message);
         setStatus("error");
-        setErrorMessage("Could not start camera. Check permissions.");
       });
 
     return () => stopScanner();
   }, [status, isScannerScriptLoaded, isAuthReady]);
 
-  // ----------------------
-  // 🛑 Stop Scanner
-  // ----------------------
   const stopScanner = () => {
     const scanner = html5QrCodeRef.current;
     if (scanner && typeof scanner.stop === "function") {
+      addLog("[INFO] Stopping QR scanner...");
       scanner
         .stop()
-        .then(() => console.log("QR scanner stopped."))
-        .catch((err) => console.error("Error stopping scanner:", err))
+        .then(() => addLog("[INFO] QR scanner stopped"))
+        .catch((err) => addLog("[ERROR] Stopping scanner failed: " + err.message))
         .finally(() => (html5QrCodeRef.current = null));
-    } else {
-      html5QrCodeRef.current = null;
-    }
+    } else html5QrCodeRef.current = null;
   };
 
-  // ----------------------
-  // 🔍 Verify Ticket
-  // ----------------------
+  // Verify ticket
   const verifyTicket = async (ticketIdFromQR) => {
+    addLog("[INFO] Verifying ticket: " + ticketIdFromQR);
     if (!db || !isAuthReady) {
+      addLog("[ERROR] Database not ready");
       setStatus("error");
-      setErrorMessage("Database not ready.");
       return;
     }
 
-    console.log("Verifying ticket:", ticketIdFromQR);
     const docRef = doc(db, "tickets", ticketIdFromQR);
-
     try {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        console.log("Ticket found:", docSnap.data());
+        addLog("[INFO] Ticket found: " + JSON.stringify(docSnap.data()));
         setTicketData(docSnap.data());
         setStatus("confirmed");
       } else {
-        console.log("Ticket not found.");
+        addLog("[WARN] Ticket not found");
         setTicketData(null);
         setStatus("notfound");
       }
     } catch (error) {
-      console.error("Error fetching document:", error);
+      addLog("[ERROR] Firestore error: " + error.message);
       setStatus("error");
-      setErrorMessage("Error querying database.");
     }
   };
 
-  // ----------------------
-  // 🖥 Render Helpers
-  // ----------------------
-  const renderStatusMessage = () => {
-    switch (status) {
-      case "confirmed":
-        return (
-          <div className="text-center text-green-400">
-            <CheckCircle className="w-16 h-16 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold">Confirmed Ticket</h2>
-          </div>
-        );
-      case "notfound":
-        return (
-          <div className="text-center text-red-400">
-            <XCircle className="w-16 h-16 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold">Ticket Not Found</h2>
-            <p className="text-lg">Invalid or unregistered QR code.</p>
-          </div>
-        );
-      case "error":
-        return (
-          <div className="text-center text-red-400">
-            <XCircle className="w-16 h-16 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold">Error</h2>
-            <p className="text-lg">{errorMessage || "Something went wrong."}</p>
-          </div>
-        );
-      case "loading":
-        return (
-          <div className="text-center text-blue-400">
-            <Loader2 className="w-16 h-16 mx-auto mb-4 animate-spin" />
-            <h2 className="text-2xl font-bold">Verifying...</h2>
-          </div>
-        );
-      default:
-        return null;
-    }
+  const handleStartScanning = () => setStatus("scanning");
+  const handleScanAgain = () => {
+    setTicketData(null);
+    setLogs([]);
+    setStatus("scanning");
   };
 
-  const renderTicketData = () => {
-    if (status !== "confirmed" || !ticketData) return null;
-    return (
-      <div className="w-full p-4 mt-6 text-left bg-gray-700 rounded-lg">
-        <div className="flex justify-between">
-          <span className="font-semibold text-gray-400">Name:</span>
-          <span className="font-medium text-white">{ticketData.userName}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="font-semibold text-gray-400">Roll No:</span>
-          <span className="font-medium text-white">{ticketData.rollNumber}</span>
-        </div>
-        {ticketData.showName && (
-          <div className="flex justify-between">
-            <span className="font-semibold text-gray-400">Show:</span>
-            <span className="font-medium text-white">{ticketData.showName}</span>
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-gray-900 font-sans text-white">
+      <h1 className="text-3xl font-bold mb-4 text-blue-400">Ticket Verifier</h1>
+
+      <div className="w-full max-w-md p-4 bg-gray-800 rounded-lg mb-4 min-h-[300px] flex flex-col items-center justify-center">
+        {status === "idle" && <button onClick={handleStartScanning} className="bg-blue-600 px-6 py-3 rounded-lg">Start Scanning</button>}
+
+        {status === "scanning" && (
+          <div className="w-full flex flex-col items-center">
+            <div id="qr-reader" className="w-full rounded-lg overflow-hidden border-2 border-gray-600"></div>
+            <button onClick={stopScanner} className="mt-2 bg-gray-600 px-4 py-2 rounded">Stop</button>
+          </div>
+        )}
+
+        {(status === "loading" || status === "confirmed" || status === "notfound" || status === "error") && (
+          <div className="w-full flex flex-col items-center">
+            {status === "loading" && <Loader2 className="animate-spin w-10 h-10 mb-2" />}
+            {status === "confirmed" && <CheckCircle className="w-10 h-10 text-green-400 mb-2" />}
+            {status === "notfound" && <XCircle className="w-10 h-10 text-red-400 mb-2" />}
+            <pre className="w-full max-h-60 overflow-auto bg-gray-700 p-2 rounded text-sm mb-2">{JSON.stringify(ticketData, null, 2)}</pre>
+            <button onClick={handleScanAgain} className="bg-blue-600 px-6 py-2 rounded">Scan Again</button>
           </div>
         )}
       </div>
-    );
-  };
 
-  const handleScanAgain = () => {
-    setTicketData(null);
-    setErrorMessage("");
-    setStatus("scanning");
-  };
-
-  const handleStartScanning = () => {
-    if (!isScannerScriptLoaded) {
-      setErrorMessage("Scanner still loading...");
-      setStatus("error");
-      return;
-    }
-    if (!isAuthReady) {
-      setErrorMessage("Authenticating... Please wait.");
-      setStatus("error");
-      setTimeout(() => setStatus("idle"), 2000);
-      return;
-    }
-    setStatus("scanning");
-  };
-
-  // ----------------------
-  // 🖥 Render
-  // ----------------------
-  return (
-    <div className="flex items-center justify-center min-h-screen p-4 bg-gray-900 font-sans">
-      <div className="w-full max-w-md p-6 text-center text-white bg-gray-800 rounded-lg shadow-2xl">
-        <h1 className="text-3xl font-bold mb-6 text-blue-400">Ticket Verifier</h1>
-
-        <div className="w-full p-4 bg-gray-700 rounded-lg min-h-[300px] flex items-center justify-center">
-          {status === "idle" && (
-            <button
-              onClick={handleStartScanning}
-              className="flex items-center justify-center px-6 py-3 font-semibold text-white transition-all bg-blue-600 rounded-lg shadow-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-            >
-              <Camera className="w-5 h-5 mr-2" />
-              Start Scanning
-            </button>
-          )}
-
-          {status === "scanning" && (
-            <div className="w-full">
-              <div id="qr-reader" className="w-full rounded-lg overflow-hidden border-2 border-gray-600"></div>
-              <button
-                onClick={stopScanner}
-                className="w-full px-4 py-2 mt-4 font-semibold text-white transition-all bg-gray-600 rounded-lg hover:bg-gray-500"
-              >
-                Stop
-              </button>
-            </div>
-          )}
-
-          {(status === "confirmed" ||
-            status === "notfound" ||
-            status === "error" ||
-            status === "loading") && (
-            <div className="flex flex-col items-center justify-center w-full">
-              {renderStatusMessage()}
-              {renderTicketData()}
-              {status !== "loading" && (
-                <button
-                  onClick={handleScanAgain}
-                  className="flex items-center justify-center w-full px-6 py-3 mt-6 font-semibold text-white transition-all bg-blue-600 rounded-lg shadow-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-                >
-                  <Camera className="w-5 h-5 mr-2" />
-                  Scan Again
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+      <div className="w-full max-w-md p-2 bg-gray-700 rounded-lg h-48 overflow-auto text-sm">
+        <h2 className="font-bold mb-1">Debug Logs:</h2>
+        {logs.map((log, i) => <div key={i}>{log}</div>)}
       </div>
     </div>
   );
