@@ -1,9 +1,18 @@
-import React, { useState, useEffect, useRef } from "react";
-import { initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, doc, getDoc } from "firebase/firestore";
-import { Camera, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import {
+  getFirestore,
+  collection,
+  query,
+  where,
+  getDocs,
+  limit,
+  setLogLevel,
+} from 'firebase/firestore';
+import { Search, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 
+// --- Firebase Config ---
 const firebaseConfig = {
   apiKey: "AIzaSyDJW77QWT9ioNKgnuyUGqfml9HXaQmhKmE",
   authDomain: "ticket-booking-app-e9607.firebaseapp.com",
@@ -13,36 +22,21 @@ const firebaseConfig = {
   appId: "1:480956494147:web:9f088a2decf7d440dbbff6",
 };
 
+// --- Initialize Firebase ---
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-function useScript(url) {
-  const [loaded, setLoaded] = React.useState(false);
-  React.useEffect(() => {
-    let script = document.querySelector(`script[src="${url}"]`);
-    if (!script) {
-      script = document.createElement("script");
-      script.src = url;
-      script.async = true;
-      script.onload = () => setLoaded(true);
-      document.body.appendChild(script);
-    } else setLoaded(true);
-  }, [url]);
-  return loaded;
-}
+setLogLevel('error'); // optional: reduce console noise
 
 export default function App() {
-  const [status, setStatus] = useState("idle"); // idle, scanning, loading, confirmed, notfound, error, alreadyScanned
+  const [rollNo, setRollNo] = useState('');
+  const [status, setStatus] = useState('idle'); // idle | loading | confirmed | notfound | error
   const [ticketData, setTicketData] = useState(null);
-  const [parsedTicketId, setParsedTicketId] = useState(null);
+  const [errorMessage, setErrorMessage] = useState('');
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const [scannedTickets, setScannedTickets] = useState(new Set());
 
-  const html5QrCodeRef = useRef(null);
-  const isScannerScriptLoaded = useScript("https://unpkg.com/html5-qrcode");
-
-  // ---------------- Auth ----------------
+  // --- Firebase Auth Effect ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -50,182 +44,168 @@ export default function App() {
       } else {
         try {
           await signInAnonymously(auth);
-        } catch {
-          setStatus("error");
+          setIsAuthReady(true);
+        } catch (error) {
+          console.error("Error signing in anonymously:", error);
+          setErrorMessage("Authentication failed.");
+          setStatus('error');
         }
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // ---------------- QR Scanner ----------------
-  useEffect(() => {
-    if (status !== "scanning" || !isScannerScriptLoaded || !isAuthReady) return;
-    if (!window.Html5Qrcode) {
-      setStatus("error");
+  // --- Firestore Ticket Verification ---
+  const handleSubmitSearch = async (e) => {
+    e.preventDefault();
+    if (!rollNo.trim() || !isAuthReady) {
+      setErrorMessage("Please wait for connection or enter a valid Roll No.");
+      setStatus('error');
       return;
     }
 
-    const qrCodeScanner = new window.Html5Qrcode("qr-reader");
-    html5QrCodeRef.current = qrCodeScanner;
-
-    const onScanSuccess = (decodedText) => {
-      stopScanner();
-      setStatus("loading");
-      verifyTicket(decodedText);
-    };
-
-    const onScanFailure = () => {};
-
-    qrCodeScanner
-      .start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        onScanSuccess,
-        onScanFailure
-      )
-      .catch(() => setStatus("error"));
-
-    return () => stopScanner();
-  }, [status, isScannerScriptLoaded, isAuthReady]);
-
-  const stopScanner = () => {
-    const scanner = html5QrCodeRef.current;
-    if (scanner && scanner.stop) {
-      scanner.stop().finally(() => {});
-      html5QrCodeRef.current = null;
-    } else {
-      html5QrCodeRef.current = null;
-    }
-  };
-
-  // ---------------- Verify Ticket ----------------
-  const verifyTicket = async (ticketQRData) => {
-    let ticketId = ticketQRData;
-    let qrInfo = {};
-
-    // Parse QR JSON
-    try {
-      qrInfo = JSON.parse(ticketQRData);
-      ticketId = qrInfo.id || qrInfo.guestIndex || ticketId;
-    } catch {
-      qrInfo = { id: ticketId };
-    }
-
-    setParsedTicketId(ticketId);
-
-    // Already scanned check
-    if (scannedTickets.has(ticketId)) {
-      setTicketData({
-        name: qrInfo.userName || qrInfo.name,
-        rollno: qrInfo.userRollNo || qrInfo.rollno,
-        show: qrInfo.showName || qrInfo.show,
-        id: ticketId,
-      });
-      setStatus("alreadyScanned");
-      return;
-    }
-
-    const docRef = doc(db, "tickets", ticketId);
-    try {
-      const docSnap = await getDoc(docRef);
-      let dataToShow;
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        dataToShow = {
-          name: data.userName,
-          rollno: data.userRollNo,
-          show: data.showName,
-          id: ticketId,
-        };
-        setStatus("confirmed");
-      } else {
-        dataToShow = {
-          name: qrInfo.userName || qrInfo.name,
-          rollno: qrInfo.userRollNo || qrInfo.rollno,
-          show: qrInfo.showName || qrInfo.show,
-          id: ticketId,
-        };
-        setStatus("notfound");
-      }
-      setTicketData(dataToShow);
-      // Mark as scanned
-      setScannedTickets(prev => new Set(prev).add(ticketId));
-    } catch {
-      setTicketData({
-        name: qrInfo.userName || qrInfo.name,
-        rollno: qrInfo.userRollNo || qrInfo.rollno,
-        show: qrInfo.showName || qrInfo.show,
-        id: ticketId,
-      });
-      setStatus("error");
-    }
-  };
-
-  const handleStartScanning = () => setStatus("scanning");
-  const handleScanAgain = () => {
+    setStatus('loading');
     setTicketData(null);
-    setParsedTicketId(null);
-    setStatus("scanning");
+    setErrorMessage('');
+
+    try {
+      const ticketsRef = collection(db, 'tickets');
+      const q = query(ticketsRef, where('userRollNo', '==', rollNo.trim()), limit(1));
+      const querySnapshot = await getDocs(q);
+
+      if (querySnapshot.empty) {
+        setStatus('notfound');
+        setTicketData(null);
+      } else {
+        const docData = querySnapshot.docs[0].data();
+        console.log("Ticket data:", docData);
+        setTicketData(docData);
+        setStatus('confirmed');
+      }
+    } catch (error) {
+      console.error("Error getting document:", error);
+      setStatus('error');
+      setErrorMessage('Error querying Firestore. Check your connection or rules.');
+    }
   };
 
+  const handleSearchAgain = () => {
+    setStatus('idle');
+    setTicketData(null);
+    setRollNo('');
+    setErrorMessage('');
+  };
+
+  // --- Render Status ---
+  const renderStatusMessage = () => {
+    switch (status) {
+      case 'confirmed':
+        return (
+          <div className="text-center text-green-400">
+            <CheckCircle className="w-16 h-16 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold">Ticket Found</h2>
+          </div>
+        );
+      case 'notfound':
+        return (
+          <div className="text-center text-red-400">
+            <XCircle className="w-16 h-16 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold">Ticket Not Found</h2>
+            <p className="text-lg">No ticket found with Roll No: {rollNo}</p>
+          </div>
+        );
+      case 'error':
+        return (
+          <div className="text-center text-red-400">
+            <XCircle className="w-16 h-16 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold">Error</h2>
+            <p className="text-lg">{errorMessage || 'An unknown error occurred.'}</p>
+          </div>
+        );
+      case 'loading':
+        return (
+          <div className="text-center text-blue-400">
+            <Loader2 className="w-16 h-16 mx-auto mb-4 animate-spin" />
+            <h2 className="text-2xl font-bold">Searching...</h2>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  // --- Render Ticket Data ---
+  const renderTicketData = () => {
+    if (status !== 'confirmed' || !ticketData) return null;
+    return (
+      <div className="w-full p-4 mt-6 space-y-2 text-left bg-gray-700 rounded-lg">
+        <div className="flex justify-between">
+          <span className="font-semibold text-gray-400">Name:</span>
+          <span className="font-medium text-white">{ticketData.userName}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="font-semibold text-gray-400">Roll No:</span>
+          <span className="font-medium text-white">{ticketData.userRollNo}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="font-semibold text-gray-400">Show:</span>
+          <span className="font-medium text-white">{ticketData.showName}</span>
+        </div>
+      </div>
+    );
+  };
+
+  // --- UI ---
   return (
-    <div className="flex flex-col items-center justify-start min-h-screen p-4 bg-gray-900 text-white">
-      <h1 className="text-3xl font-bold mb-4 text-blue-400">Ticket Verifier</h1>
+    <div className="flex items-center justify-center min-h-screen p-4 bg-gray-900 font-sans">
+      <div className="w-full max-w-md p-6 text-center text-white bg-gray-800 rounded-lg shadow-2xl">
+        <h1 className="text-3xl font-bold mb-6 text-blue-400">Ticket Verifier</h1>
 
-      <div className="w-full max-w-md p-4 bg-gray-800 rounded-lg mb-4 min-h-[300px] flex flex-col items-center justify-center">
-        {status === "idle" && (
-          <button onClick={handleStartScanning} className="bg-blue-600 px-6 py-3 rounded-lg">
-            Start Scanning
-          </button>
-        )}
+        <div className="w-full p-4 bg-gray-700 rounded-lg min-h-[300px] flex items-center justify-center">
+          {status === 'idle' && (
+            <form className="w-full" onSubmit={handleSubmitSearch}>
+              <label htmlFor="rollNoInput" className="block text-lg font-medium mb-3">
+                Enter Roll Number
+              </label>
+              <input
+                id="rollNoInput"
+                type="text"
+                value={rollNo}
+                onChange={(e) => setRollNo(e.target.value)}
+                placeholder="e.g., 2520030199"
+                className="w-full px-4 py-3 text-lg text-white bg-gray-800 border-2 border-gray-600 rounded-lg focus:outline-none focus:border-blue-500"
+              />
+              <button
+                type="submit"
+                disabled={!isAuthReady || !rollNo.trim()}
+                className="flex items-center justify-center w-full px-6 py-3 mt-6 font-semibold text-white transition-all bg-blue-600 rounded-lg shadow-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 disabled:opacity-50"
+              >
+                <Search className="w-5 h-5 mr-2" />
+                Search Ticket
+              </button>
+              {!isAuthReady && (
+                <p className="text-yellow-400 text-sm mt-4">Connecting to database...</p>
+              )}
+            </form>
+          )}
 
-        {status === "scanning" && (
-          <div className="w-full flex flex-col items-center">
-            <div id="qr-reader" className="w-full rounded-lg overflow-hidden border-2 border-gray-600 mb-2"></div>
-            <button onClick={stopScanner} className="mt-2 bg-gray-600 px-4 py-2 rounded">
-              Stop
-            </button>
-          </div>
-        )}
-
-        {(status === "loading" || status === "confirmed" || status === "notfound" || status === "error" || status === "alreadyScanned") && (
-          <div className="w-full flex flex-col items-center mt-2">
-            {status === "loading" && <Loader2 className="animate-spin w-10 h-10 mb-2" />}
-            {status === "confirmed" && <CheckCircle className="w-10 h-10 text-green-400 mb-2" />}
-            {status === "alreadyScanned" && <XCircle className="w-10 h-10 text-yellow-400 mb-2" />}
-            {(status === "notfound" || status === "error") && <XCircle className="w-10 h-10 text-red-400 mb-2" />}
-
-            {ticketData && (
-              <div className="w-full p-4 mt-2 space-y-2 bg-gray-700 rounded-lg text-left">
-                {ticketData.name && (
-                  <div>
-                    <span className="font-semibold">Name:</span> {ticketData.name}
-                  </div>
-                )}
-                {ticketData.rollno && (
-                  <div>
-                    <span className="font-semibold">Roll Number:</span> {ticketData.rollno}
-                  </div>
-                )}
-                {ticketData.show && (
-                  <div>
-                    <span className="font-semibold">Show:</span> {ticketData.show}
-                  </div>
-                )}
-                {ticketData.id && (
-                  <div>
-                    <span className="font-semibold">Ticket ID:</span> {ticketData.id}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <button onClick={handleScanAgain} className="mt-4 bg-blue-600 px-6 py-2 rounded">
-              Scan Again
-            </button>
-          </div>
-        )}
+          {(status === 'confirmed' ||
+            status === 'notfound' ||
+            status === 'error' ||
+            status === 'loading') && (
+            <div className="flex flex-col items-center justify-center w-full">
+              {renderStatusMessage()}
+              {renderTicketData()}
+              <button
+                onClick={handleSearchAgain}
+                className="flex items-center justify-center w-full px-6 py-3 mt-6 font-semibold text-white transition-all bg-blue-600 rounded-lg shadow-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+              >
+                <Search className="w-5 h-5 mr-2" />
+                Search Again
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
